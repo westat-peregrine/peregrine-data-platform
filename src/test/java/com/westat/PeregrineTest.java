@@ -1,9 +1,10 @@
-package com.myorg;
+package com.westat;
 
 import software.amazon.awscdk.core.App;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.westat.PeregrineStack;
 
 import java.io.IOException;
 
