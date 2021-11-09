@@ -10,7 +10,6 @@ import software.amazon.awscdk.core.Stack;
 import software.amazon.awscdk.core.StackProps;
 import software.amazon.awscdk.services.glue.*;
 import software.amazon.awscdk.services.glue.CfnCrawler.S3TargetProperty;
-import software.amazon.awscdk.services.glue.CfnCrawler.ScheduleProperty;
 import software.amazon.awscdk.services.glue.CfnCrawler.SchemaChangePolicyProperty;
 import software.amazon.awscdk.services.glue.CfnCrawler.TargetsProperty;
 import software.amazon.awscdk.services.iam.Effect;
@@ -114,7 +113,7 @@ public class PeregrineStack extends Stack {
             .schemaChangePolicy(SchemaChangePolicyProperty.builder().updateBehavior("LOG").build())
             .build();
 
-        // Create s3 notification for sftp uploads
+        // Create s3 notification for uploads
         Topic s3Topic = Topic.Builder.create(this, "s3Topic")
             .displayName("Peregrine Upload Notification")    
             .build();
