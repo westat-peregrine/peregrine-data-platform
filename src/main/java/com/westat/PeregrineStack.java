@@ -5,28 +5,41 @@ import java.util.Map;
 
 import software.amazon.awscdk.core.CfnOutput;
 import software.amazon.awscdk.core.Construct;
+import software.amazon.awscdk.core.Duration;
 import software.amazon.awscdk.core.RemovalPolicy;
 import software.amazon.awscdk.core.Stack;
 import software.amazon.awscdk.core.StackProps;
-import software.amazon.awscdk.services.glue.*;
+import software.amazon.awscdk.services.athena.CfnWorkGroup;
+import software.amazon.awscdk.services.athena.CfnWorkGroup.EncryptionConfigurationProperty;
+import software.amazon.awscdk.services.athena.CfnWorkGroup.ResultConfigurationProperty;
+import software.amazon.awscdk.services.athena.CfnWorkGroup.WorkGroupConfigurationProperty;
+import software.amazon.awscdk.services.glue.CfnCrawler;
+import software.amazon.awscdk.services.glue.CfnCrawler.RecrawlPolicyProperty;
 import software.amazon.awscdk.services.glue.CfnCrawler.S3TargetProperty;
 import software.amazon.awscdk.services.glue.CfnCrawler.SchemaChangePolicyProperty;
 import software.amazon.awscdk.services.glue.CfnCrawler.TargetsProperty;
+import software.amazon.awscdk.services.glue.Database;
+import software.amazon.awscdk.services.iam.CfnAccessKey;
 import software.amazon.awscdk.services.iam.Effect;
+import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.PolicyDocument;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
+import software.amazon.awscdk.services.iam.User;
+import software.amazon.awscdk.services.lambda.Code;
+import software.amazon.awscdk.services.lambda.Function;
+import software.amazon.awscdk.services.lambda.Runtime;
+import software.amazon.awscdk.services.lambda.eventsources.SnsEventSource;
 import software.amazon.awscdk.services.s3.BlockPublicAccess;
 import software.amazon.awscdk.services.s3.Bucket;
 import software.amazon.awscdk.services.s3.BucketEncryption;
 import software.amazon.awscdk.services.s3.EventType;
+import software.amazon.awscdk.services.s3.deployment.BucketDeployment;
+import software.amazon.awscdk.services.s3.deployment.Source;
 import software.amazon.awscdk.services.s3.notifications.SnsDestination;
 import software.amazon.awscdk.services.sns.Topic;
 import software.amazon.awscdk.services.sns.subscriptions.EmailSubscription;
-import software.amazon.awscdk.services.transfer.CfnServer;
-import software.amazon.awscdk.services.transfer.CfnUser;
-import software.amazon.awscdk.services.transfer.CfnUser.HomeDirectoryMapEntryProperty;
 
 public class PeregrineStack extends Stack {
     public PeregrineStack(final Construct scope, final String id) {
@@ -36,36 +49,86 @@ public class PeregrineStack extends Stack {
     public PeregrineStack(final Construct scope, final String id, final StackProps props) {
         super(scope, id, props);
 
-        // The code that defines your stack goes here
+        // Create IAM user and API key for S3 + Athena access
+        User peregrineUser = User.Builder.create(this, "peregrineUser")
+            .userName("falcon")
+            .managedPolicies(Arrays.asList(
+                ManagedPolicy.fromAwsManagedPolicyName("AmazonAthenaFullAccess"),
+                ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSQuicksightAthenaAccess")))
+            .path("/peregrine/")
+            .build();
 
-         // Add public SFTP endpoint and configure S3 storage
-        /* CfnServer sftpEndpoint = CfnServer.Builder.create(this, "sftpEndpoint")
-            .protocols(Arrays.asList("SFTP"))
-            .endpointType("PUBLIC")
-            .build(); */
-        
-        Bucket s3DemoBucket = Bucket.Builder.create(this, "s3DemoBucket")
+        CfnAccessKey falconKey = CfnAccessKey.Builder.create(this, "falconKey")
+            .userName(peregrineUser.getUserName())
+            .status("Active")
+            .build();
+
+        // Store API key in Secrets Manager
+
+        // Create S3 bucket for Athena
+        Bucket athenaBucket = Bucket.Builder.create(this, "athenaBucket")
+            .bucketName("aws-athena-query-results-peregrine-"+this.getAccount()) // Bucket name should align with managed policy
+            .encryption(BucketEncryption.S3_MANAGED)
+            .removalPolicy(RemovalPolicy.DESTROY)
+            .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
+            .build();
+
+        // Define Athena workgroup
+        CfnWorkGroup.Builder.create(this, "athenaWorkGroup")
+            .name("peregrine")
+            .workGroupConfiguration(WorkGroupConfigurationProperty.builder()
+                .enforceWorkGroupConfiguration(true)
+                .publishCloudWatchMetricsEnabled(true)
+                .resultConfiguration(ResultConfigurationProperty.builder()
+                    .encryptionConfiguration(EncryptionConfigurationProperty.builder().encryptionOption("SSE_S3").build())
+                    .outputLocation(athenaBucket.s3UrlForObject())
+                    .build())
+                .bytesScannedCutoffPerQuery(1000000000)
+                .build())
+            .build();
+
+        // Create S3 bucket for data
+        Bucket peregrineBucket = Bucket.Builder.create(this, "peregrineBucket")
             .bucketName("peregrine-"+this.getAccount())
             .encryption(BucketEncryption.S3_MANAGED)
             .removalPolicy(RemovalPolicy.DESTROY) 
             .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
             .build();
 
-        // Create role for S3 access from AWS Transfer and Glue
-        PolicyStatement listSftpBucket = new PolicyStatement();
-        listSftpBucket.setSid("ListSFTPBucket");
-        listSftpBucket.setEffect(Effect.ALLOW);
-        listSftpBucket.addActions("s3:ListBucket");
-        listSftpBucket.addResources(s3DemoBucket.getBucketArn());
+        // Deploy sample data
+        BucketDeployment.Builder.create(this, "peregrineData")
+            .sources(Arrays.asList(Source.asset("data")))
+            .destinationBucket(peregrineBucket)
+            .exclude(Arrays.asList(".DS_Store"))
+            .prune(false)
+            .retainOnDelete(false)
+            .build();
 
-        PolicyStatement modifySftpFolders = new PolicyStatement();
-        modifySftpFolders.setSid("HomeDirObjectAccess");
-        modifySftpFolders.setEffect(Effect.ALLOW);
-        modifySftpFolders.addActions("s3:PutObject","s3:GetObject","s3:DeleteObject");
-        modifySftpFolders.addResources(s3DemoBucket.getBucketArn()+"/*");
+        // Create IAM resources for S3 access
+        PolicyStatement listPeregrineBucket = new PolicyStatement();
+        listPeregrineBucket.setSid("peregrineBucketList");
+        listPeregrineBucket.setEffect(Effect.ALLOW);
+        listPeregrineBucket.addActions("s3:ListBucket");
+        listPeregrineBucket.addResources(peregrineBucket.getBucketArn());
+
+        PolicyStatement modifyPeregrineData = new PolicyStatement();
+        modifyPeregrineData.setSid("peregrineObjectAccess");
+        modifyPeregrineData.setEffect(Effect.ALLOW);
+        modifyPeregrineData.addActions("s3:PutObject","s3:GetObject","s3:DeleteObject");
+        modifyPeregrineData.addResources(peregrineBucket.getBucketArn()+"/*");
 
         PolicyDocument s3PolicyDocument = new PolicyDocument();
-        s3PolicyDocument.addStatements(listSftpBucket, modifySftpFolders);
+        s3PolicyDocument.addStatements(listPeregrineBucket, modifyPeregrineData);
+
+        // Grant S3 rights to IAM user
+        peregrineUser.addToPolicy(listPeregrineBucket);
+        peregrineUser.addToPolicy(modifyPeregrineData);
+
+        // Add public SFTP endpoint and configure S3 storage
+        /* CfnServer sftpEndpoint = CfnServer.Builder.create(this, "sftpEndpoint")
+            .protocols(Arrays.asList("SFTP"))
+            .endpointType("PUBLIC")
+            .build(); */
 
         /* Role s3TransferRole = Role.Builder.create(this, "s3TransferRole")
             .assumedBy(new ServicePrincipal("transfer.amazonaws.com"))
@@ -74,59 +137,75 @@ public class PeregrineStack extends Stack {
             .inlinePolicies(Map.of("s3TransferRolePolicy", s3PolicyDocument))
             .build(); */
 
-        Role s3GlueRole = Role.Builder.create(this, "s3GlueRole")
-            .assumedBy(new ServicePrincipal("glue.amazonaws.com"))
-            .roleName("s3GlueRole")
-            .description("Allows Glue to access objects stored in the SFTP bucket")
-            .inlinePolicies(Map.of("s3GluePolicy",s3PolicyDocument))
-            .build();
-
         // Create SFTP test user
-        // TODO: Move to function that accepts parameters for username and ssh key and creates home folder
-
-        /* HomeDirectoryMapEntryProperty mapping = HomeDirectoryMapEntryProperty.builder()
-            .entry("/")
-            .target("/"+sftpS3.getBucketName()+"/${transfer:UserName}")
-            .build(); */
-
         /* CfnUser.Builder.create(this, "SFTPUser")
             .serverId(sftpEndpoint.getAttrServerId())
             .userName("test-user")
             .role(s3TransferRole.getRoleArn())
             .homeDirectoryType("LOGICAL")
             .homeDirectoryMappings(Arrays.asList(mapping))
-            .sshPublicKeys(Arrays.asList("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCeD6xLnwlwr5XtgmKiCG3ABy3sUzY4aE3EV7DUZKnRHWRWCiEX+HH84DTStr2UfxLGyoGXGMPcvU2NFTN8ttrxy7rzYlBFyldiU24XFQXcnnH86PRD6KcuHNbeAv3GM3XQtFvkUUfsY0fh5v8cnTxS3l6axT07WUxLF4/jM6g8O0nPefyYbWFmCjGs2RZZgs2JJ/eK7ukWghok2jpfd+vIOhiK5qebA+VWQxLcaLD6vti7k3kncB7l4kN+5KamUq47dzswpgS+BoRu9vfXyvMscPjvFfC9XGKMcNf0kEVgIZ9RCMeZW29WZ/TGJnb8zfbFPdz3GdwbRfx6sS59Vc43 wesnet\\ausborn_s@vmSAusborn"))
             .build(); */
 
-        // Create Glue resources for access to SFTP data via Athena
-
-        Database demoDatabase = Database.Builder.create(this,"demoDatabase")
-            .databaseName("peregrine_demo")
+        // Create Glue resources for access to data via Athena
+        Role peregrineGlueRole = Role.Builder.create(this, "peregrineGlueRole")
+            .assumedBy(new ServicePrincipal("glue.amazonaws.com"))
+            .roleName("peregrineGlueRole")
+            .description("Allows Glue to access objects stored in the Peregrine bucket")
+            .inlinePolicies(Map.of("s3GluePolicy",s3PolicyDocument))
+            .managedPolicies(Arrays.asList(ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSGlueServiceRole")))
             .build();
 
-        CfnCrawler cfnDemoCrawler = CfnCrawler.Builder.create(this, "demoCrawler")
-            .databaseName(demoDatabase.getDatabaseName())
-            .targets(TargetsProperty.builder().s3Targets(Arrays.asList(S3TargetProperty.builder().path("s3://"+s3DemoBucket.getBucketName()).build())).build())
-            .role(s3GlueRole.getRoleArn())
-            .tablePrefix("peregrine_demo_")
+        Database peregrineDatabase = Database.Builder.create(this,"peregrineDatabase")
+            .databaseName("peregrine")
+            .build();
+
+        CfnCrawler peregrineCrawler = CfnCrawler.Builder.create(this, "peregrineCrawler")
+            .databaseName(peregrineDatabase.getDatabaseName())
+            .targets(TargetsProperty.builder().s3Targets(Arrays.asList(S3TargetProperty.builder().path("s3://"+peregrineBucket.getBucketName()).build())).build())
+            .role(peregrineGlueRole.getRoleArn())
+            .tablePrefix("peregrine_")
+            .name("peregrineCrawler")
+            .recrawlPolicy(RecrawlPolicyProperty.builder().recrawlBehavior("CRAWL_EVERYTHING").build())
             .configuration("{\"Version\":1,\"CrawlerOutput\":{\"Partitions\":{\"AddOrUpdateBehavior\":\"InheritFromTable\"}}}")
-            .schemaChangePolicy(SchemaChangePolicyProperty.builder().updateBehavior("LOG").build())
+            .schemaChangePolicy(SchemaChangePolicyProperty.builder().updateBehavior("UPDATE_IN_DATABASE").deleteBehavior("DELETE_FROM_DATABASE").build())
             .build();
 
-        // Create s3 notification for uploads
+        // Create SNS topic for data uploads
         Topic s3Topic = Topic.Builder.create(this, "s3Topic")
             .displayName("Peregrine Upload Notification")    
             .build();
 
-        s3DemoBucket.addEventNotification(EventType.OBJECT_CREATED_PUT, new SnsDestination(s3Topic));
+        peregrineBucket.addEventNotification(EventType.OBJECT_CREATED, new SnsDestination(s3Topic));
 
-        // Subscribe to the topic
+        // Create lambda to execute glue crawler on S3 uploads
+        Function crawlerLambda = Function.Builder.create(this, "crawlerLambda")
+            .runtime(Runtime.PYTHON_3_9)
+            .code(Code.fromAsset("lambda"))
+            .handler("runPeregrineCrawler.lambda_handler")
+            .timeout(Duration.minutes(1))
+            .build();
+
+        crawlerLambda.addEventSource(SnsEventSource.Builder.create(s3Topic).build());
+        crawlerLambda.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(Arrays.asList("glue:StartCrawler"))
+            .effect(Effect.ALLOW)
+            .resources(Arrays.asList("arn:aws:glue:"+this.getRegion()+":"+this.getAccount()+":crawler/"+peregrineCrawler.getRef()))
+            .build());
+        crawlerLambda.addToRolePolicy(listPeregrineBucket);
+        crawlerLambda.addToRolePolicy(modifyPeregrineData);
+
+        // Subscribe email to the topic -- change to parameter
         s3Topic.addSubscription(EmailSubscription.Builder.create("ScotAusborn@westat.com").build());  
 
         // Get output values for SFTP server and S3 bucket
         // CfnOutput.Builder.create(this, "sftpServer").exportName("sftpEndpoint").description("SFTP Server ID").value(sftpEndpoint.getAttrServerId()).build();
-        CfnOutput.Builder.create(this, "Bucket").exportName("s3DemoBucket").description("Demo Bucket ID").value(s3DemoBucket.getBucketName()).build(); 
+        CfnOutput.Builder.create(this, "Bucket").exportName("peregrineBucket").description("Demo Bucket ID").value(peregrineBucket.getBucketName()).build(); 
         
+        // Get access key credentials
+        CfnOutput.Builder.create(this, "Key").exportName("falconKey").description("Demo User Key").value(falconKey.getRef()).build();
+        CfnOutput.Builder.create(this, "Secret").exportName("falconSecret").description("Demo User Secret").value(falconKey.getAttrSecretAccessKey()).build();
+
+
     }
 }
 
