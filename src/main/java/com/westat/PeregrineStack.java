@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.Map;
 
 import software.amazon.awscdk.core.CfnOutput;
+import software.amazon.awscdk.core.CfnParameter;
 import software.amazon.awscdk.core.Construct;
 import software.amazon.awscdk.core.Duration;
 import software.amazon.awscdk.core.RemovalPolicy;
@@ -27,6 +28,7 @@ import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.iam.User;
+import software.amazon.awscdk.services.kms.Alias;
 import software.amazon.awscdk.services.lambda.Code;
 import software.amazon.awscdk.services.lambda.Function;
 import software.amazon.awscdk.services.lambda.Runtime;
@@ -38,6 +40,7 @@ import software.amazon.awscdk.services.s3.EventType;
 import software.amazon.awscdk.services.s3.deployment.BucketDeployment;
 import software.amazon.awscdk.services.s3.deployment.Source;
 import software.amazon.awscdk.services.s3.notifications.SnsDestination;
+import software.amazon.awscdk.services.secretsmanager.CfnSecret;
 import software.amazon.awscdk.services.sns.Topic;
 import software.amazon.awscdk.services.sns.subscriptions.EmailSubscription;
 
@@ -48,6 +51,12 @@ public class PeregrineStack extends Stack {
 
     public PeregrineStack(final Construct scope, final String id, final StackProps props) {
         super(scope, id, props);
+
+        // Create parameter for receiving email notifications
+        CfnParameter emailAddress = CfnParameter.Builder.create(this, "emailAddress")
+            .type("String")
+            .description("The email address where upload notifications will be sent")
+            .build();
 
         // Create IAM user and API key for S3 + Athena access
         User peregrineUser = User.Builder.create(this, "peregrineUser")
@@ -70,6 +79,7 @@ public class PeregrineStack extends Stack {
             .bucketName("aws-athena-query-results-peregrine-"+this.getAccount()) // Bucket name should align with managed policy
             .encryption(BucketEncryption.S3_MANAGED)
             .removalPolicy(RemovalPolicy.DESTROY)
+            .autoDeleteObjects(true)
             .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
             .build();
 
@@ -85,6 +95,7 @@ public class PeregrineStack extends Stack {
                     .build())
                 .bytesScannedCutoffPerQuery(1000000000)
                 .build())
+            .recursiveDeleteOption(true)
             .build();
 
         // Create S3 bucket for data
@@ -172,7 +183,8 @@ public class PeregrineStack extends Stack {
 
         // Create SNS topic for data uploads
         Topic s3Topic = Topic.Builder.create(this, "s3Topic")
-            .displayName("Peregrine Upload Notification")    
+            .displayName("Peregrine Upload Notification")
+            .masterKey(Alias.fromAliasName(this, "s3TopicKey", "alias/aws/sns"))
             .build();
 
         peregrineBucket.addEventNotification(EventType.OBJECT_CREATED, new SnsDestination(s3Topic));
@@ -194,17 +206,19 @@ public class PeregrineStack extends Stack {
         crawlerLambda.addToRolePolicy(listPeregrineBucket);
         crawlerLambda.addToRolePolicy(modifyPeregrineData);
 
-        // Subscribe email to the topic -- change to parameter
-        s3Topic.addSubscription(EmailSubscription.Builder.create("ScotAusborn@westat.com").build());  
+        // Subscribe email to the topic
+        s3Topic.addSubscription(EmailSubscription.Builder.create(emailAddress.getValueAsString()).build());  
 
         // Get output values for SFTP server and S3 bucket
         // CfnOutput.Builder.create(this, "sftpServer").exportName("sftpEndpoint").description("SFTP Server ID").value(sftpEndpoint.getAttrServerId()).build();
-        CfnOutput.Builder.create(this, "Bucket").exportName("peregrineBucket").description("Demo Bucket ID").value(peregrineBucket.getBucketName()).build(); 
+        CfnOutput.Builder.create(this, "PeregrineBucket").exportName("peregrineBucket").description("Peregrine S3 Bucket").value(peregrineBucket.getBucketName()).build(); 
         
-        // Get access key credentials
-        CfnOutput.Builder.create(this, "Key").exportName("falconKey").description("Demo User Key").value(falconKey.getRef()).build();
-        CfnOutput.Builder.create(this, "Secret").exportName("falconSecret").description("Demo User Secret").value(falconKey.getAttrSecretAccessKey()).build();
-
+        // Store access key credentials as secret
+        CfnSecret.Builder.create(this, "falconSecret")
+            .description("Contains the API key for the Peregrine demo user")
+            .name("falconKey")
+            .secretString("{\"AccessKey\":\""+falconKey.getRef()+"\",\"SecretKey\":\""+falconKey.getAttrSecretAccessKey()+"\"}")
+            .build();
 
     }
 }
