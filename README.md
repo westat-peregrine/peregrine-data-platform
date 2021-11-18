@@ -13,16 +13,33 @@ The following requirements must be met prior to deployment:
 3. [Git](https://git-scm.com/downloads)
 
 ## Installation
-Once all requirements are met, proceed with cloning and deploying the application.  Be sure to insert appropriate parameter values in the deploy step.
-
+Execute the commands below to deploy the application.  Substitute a valid email address in the parameters argument for receiving data upload notifications. 
 
     git clone https://gitlab.westat.com/ausborn_s/peregrine
-    cd peregrine-master
+    cd peregrine
     cdk synth
-    cdk deploy --parameters email= --parameters sftp= --parameters quicksight=
+    cdk deploy --parameters emailAddress=peregrine(at)westat(dot)com
 
 ## Usage
-1. Confirm SNS subscription 
-2. Retrieve user API key
-3. Connect to S3 using Cyberduck or WinSCP
-4. Connect to Athena using DBeaver
+1. **Confirm SNS subscription**  
+Once the deployment is complete, check the inbox of the supplied email address to confirm notifications for data upload activity.  
+
+2. **Retrieve the Peregrine API key**  
+To access the API credentials of the IAM user created by the application, which is used to connect to the S3 bucket and Athena with client software, execute the  AWS CLI command below.  If you do not have the AWS CLI installed, you may retrieve the API key from the Secrets Manager console.
+
+        aws secretsmanager get-secret-value --secret-id falconKey --query SecretString --output text
+    
+
+3. **Upload files to S3**  
+New data may be uploaded into the Peregrine S3 bucket via the AWS console, or by using a file transfer client such as Cyberduck (macOS) or WinSCP (Windows).  For the clients, specify S3 as the transfer protocol and use the API access key as the username and secret key as the password.  New data should be uploaded into a separate folder created alongside the existing sample datasets.  Once data are uploaded, the crawler will begin to execute automatically. 
+
+    For best results, use delimited text files with column headings.  JSON files should contain one object per line. 
+
+4. **Query data with Athena**  
+After the crawler executes, data will be available for querying using Athena.  An Athena workgroup called "peregrine" is created to provide access to data and a query result location.  A max scan size of 1GB per query is set by the application, but this may be adjusted in the code.  
+  
+    To access Athena tables from a SQL client, use a JDBC driver connection and provide the following properties along with the API access key and secret key for username and password:  
+
+    **Region**:  us-east-1  
+**S3 Output Location**:  s3://aws-athena-query-results-peregrine-*accountID*  
+**Workgroup**: peregrine
