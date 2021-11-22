@@ -107,7 +107,7 @@ public class PeregrineStack extends Stack {
             .build();
 
         // Deploy sample data
-        BucketDeployment.Builder.create(this, "peregrineData")
+        BucketDeployment peregrineDeploy = BucketDeployment.Builder.create(this, "peregrineData")
             .sources(Arrays.asList(Source.asset("data")))
             .destinationBucket(peregrineBucket)
             .exclude(Arrays.asList(".DS_Store"))
@@ -205,6 +205,10 @@ public class PeregrineStack extends Stack {
             .build());
         crawlerLambda.addToRolePolicy(listPeregrineBucket);
         crawlerLambda.addToRolePolicy(modifyPeregrineData);
+
+        // Ensure that crawler executes at deployment
+        peregrineDeploy.getNode().addDependency(peregrineCrawler);
+        peregrineDeploy.getNode().addDependency(crawlerLambda);
 
         // Subscribe email to the topic
         s3Topic.addSubscription(EmailSubscription.Builder.create(emailAddress.getValueAsString()).build());  
