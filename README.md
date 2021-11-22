@@ -1,5 +1,8 @@
 # Peregrine Data Platform
 The Peregrine Data Platform is an AWS CDK application written in Java that deploys a data analytics pipeline using S3, Glue, and Athena.  As new data are uploaded to the Peregrine S3 bucket, a Glue crawler is triggered to determine the schema and make the data available for querying using Athena.  Sample JSON and CSV datasets are included.  
+  
+Annual AWS costs to operate the demo are approximately $20.  A configurable budget shell is available [here](https://calculator.aws/#/estimate?id=6364c2449813a696e4d02427800618a713aa6be6).  
+
 <br>
 
 ![Peregrine Diagram](diagram.png)
