@@ -215,11 +215,11 @@ public class PeregrineStack extends Stack {
         peregrineDeploy.getNode().addDependency(crawlerLambda);
 
         
-        // Subscribe user email to the S3topic
+        // Subscribe user email to the S3 upload topic
         s3Topic.addSubscription(EmailSubscription.Builder.create(emailAddress.getValueAsString()).build());  
 
         
-        // Get output values for SFTP server and S3 bucket
+        // Return S3 bucket name
         CfnOutput.Builder.create(this, "PeregrineBucket").exportName("peregrineBucket").description("Peregrine S3 Bucket").value(peregrineBucket.getBucketName()).build(); 
         
 
