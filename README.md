@@ -30,7 +30,7 @@ Once the deployment is complete, check the inbox of the supplied email address t
 2. **Retrieve the Peregrine API key**  
 To access the API credentials of the IAM user created by the application, which is used to connect to the S3 bucket and Athena with client software, execute the  AWS CLI command below.  If you do not have the AWS CLI installed, you may retrieve the API key from the Secrets Manager console.
 
-        aws secretsmanager get-secret-value --secret-id falconKey --query SecretString --output text
+        aws secretsmanager get-secret-value --secret-id peregrineKey --query SecretString --output text
     
 
 3. **Upload files to S3**  
