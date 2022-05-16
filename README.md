@@ -18,7 +18,7 @@ The following requirements must be met prior to deployment:
 ## Installation
 Execute the commands below to deploy the application.  Substitute a valid email address in the parameters argument for receiving data upload notifications. 
 
-    git clone https://gitlab.westat.com/ausborn_s/peregrine
+    git clone https://github.com/westat-peregrine/peregrine-data-platform
     cd peregrine
     cdk synth
     cdk deploy --parameters emailAddress=peregrine(at)westat(dot)com
